@@ -1,5 +1,6 @@
 const DEFAULT_API_BASE = (window.API_BASE || localStorage.getItem('API_BASE') || '').trim();
-const DEFAULT_WS_BASE = (window.WS_BASE || localStorage.getItem('WS_BASE') || 'wss://stream.binance.com:9443').trim();
+const DEFAULT_WS_BASE = (window.WS_BASE || localStorage.getItem('WS_BASE') || '').trim();
+const WS_ENABLED = (window.WS_ENABLED ?? true) !== false;
 const MAX_BARS = 500;
 
 const pairSelect = document.getElementById('pairSelect');
@@ -30,6 +31,7 @@ const installBtn = document.getElementById('installBtn');
 
 let apiBase = DEFAULT_API_BASE;
 let wsBase = DEFAULT_WS_BASE;
+if (!wsBase && apiBase) { wsBase = apiBase.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'); }
 let timeframes = [];
 let pairs = [];
 let currentTf = '5m';
@@ -559,7 +561,6 @@ async function refreshAll() {
   await loadPair();
 }
 
-fullscreenBtn
 function enterFullscreenFallback() {
   chartWrap.classList.add('fullscreen-fallback');
   document.body.classList.add('fullscreen-mode');
@@ -570,15 +571,36 @@ function exitFullscreenFallback() {
   document.body.classList.remove('fullscreen-mode');
   fsToolbar.classList.remove('show');
 }
-fullscreenBtn.addEventListener('click', () => {\n  if (document.fullscreenElement) {\n    document.exitFullscreen();\n    return;\n  }\n  if (chartWrap.requestFullscreen) {\n    chartWrap.requestFullscreen();\n  } else {
+fullscreenBtn.addEventListener('click', () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+    return;
+  }
+  if (chartWrap.requestFullscreen) {
+    chartWrap.requestFullscreen();
+  } else {
     enterFullscreenFallback();
-  }\n});
+  }
+});
 
-fsExitBtn.addEventListener('click', () => {\n  if (document.fullscreenElement) {\n    document.exitFullscreen();\n  } else {
+fsExitBtn.addEventListener('click', () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen();
+  } else {
     exitFullscreenFallback();
-  }\n});
+  }
+});
 
-document.addEventListener('fullscreenchange', () => {\n  const isFs = !!document.fullscreenElement;\n  fsToolbar.classList.toggle('show', isFs);\n  if (isFs) {\n    document.body.classList.add('fullscreen-mode');\n  } else {\n    document.body.classList.remove('fullscreen-mode');\n    chartWrap.classList.remove('fullscreen-fallback');\n  }\n});
+document.addEventListener('fullscreenchange', () => {
+  const isFs = !!document.fullscreenElement;
+  fsToolbar.classList.toggle('show', isFs);
+  if (isFs) {
+    document.body.classList.add('fullscreen-mode');
+  } else {
+    document.body.classList.remove('fullscreen-mode');
+    chartWrap.classList.remove('fullscreen-fallback');
+  }
+});
 
 toggleSignalsBtn.addEventListener('click', () => {
   signalsVisible = !signalsVisible;
@@ -626,6 +648,8 @@ apiSaveBtn.addEventListener('click', async () => {
   apiBase = normalizeBase(apiBaseInput.value.trim());
   if (!apiBase) return;
   localStorage.setItem('API_BASE', apiBase);
+  wsBase = '';
+  deriveWsBase();
   closeWs();
   await loadConfig();
   await refreshAll();
@@ -691,5 +715,9 @@ apiBaseInput.value = apiBase;
 })();
 
 setInterval(refreshAll, 20000);
+
+
+
+
 
 

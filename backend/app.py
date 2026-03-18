@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request\nfrom flask_sock import Sock
 from flask_cors import CORS
 
 # Ensure project root is on sys.path when running directly
@@ -22,7 +22,7 @@ from strategy.fvg_detector import detect_fvgs
 from strategy.liquidity_detector import detect_liquidity_pools, detect_liquidity_sweep
 from utils.session_filter import is_in_session
 
-app = Flask(__name__)
+app = Flask(__name__)\nsock = Sock(app)
 
 # Allow frontend (Vercel) to call backend (Render)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -228,3 +228,37 @@ def signals_csv():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8501"))
     app.run(host="0.0.0.0", port=port, debug=False)
+@sock.route('/ws/<path:stream>')
+def ws_proxy(ws, stream: str):
+    """
+    Simple WebSocket proxy to upstream (e.g., Binance WS).
+    """
+    upstream_base = os.getenv('WS_UPSTREAM_BASE', 'wss://stream.binance.com:9443/ws')
+    target = f"{upstream_base}/{stream}"
+    try:
+        from websocket import create_connection, WebSocketTimeoutException
+        upstream = create_connection(target, timeout=10)
+        upstream.settimeout(1)
+    except Exception:
+        try:
+            ws.send('{"ok":false,"error":"upstream_connect_failed"}')
+        except Exception:
+            pass
+        return
+    try:
+        while True:
+            if getattr(ws, 'closed', False):
+                break
+            try:
+                msg = upstream.recv()
+                if msg is not None:
+                    ws.send(msg)
+            except WebSocketTimeoutException:
+                continue
+            except Exception:
+                break
+    finally:
+        try:
+            upstream.close()
+        except Exception:
+            pass
