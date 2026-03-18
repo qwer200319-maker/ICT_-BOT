@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sys
+import time
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +26,30 @@ app = Flask(__name__)
 
 # Allow frontend (Vercel) to call backend (Render)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+CACHE_TTL_SECONDS = int(os.getenv("API_CACHE_TTL_SECONDS", "15"))
+CACHE: Dict[str, Dict[str, Any]] = {}
+REFRESHING: set[str] = set()
+REFRESH_LOCK = threading.Lock()
+
+
+def _cache_key(pair: str, tf: str, include_fvg: bool, include_liq: bool) -> str:
+    return f"{pair}:{tf}:fvg{int(include_fvg)}:liq{int(include_liq)}"
+
+
+def _get_cache(pair: str, tf: str, include_fvg: bool, include_liq: bool) -> Optional[Dict[str, Any]]:
+    key = _cache_key(pair, tf, include_fvg, include_liq)
+    entry = CACHE.get(key)
+    if not entry:
+        return None
+    if (time.time() - entry["ts"]) > CACHE_TTL_SECONDS:
+        return None
+    return entry["data"]
+
+
+def _set_cache(pair: str, tf: str, include_fvg: bool, include_liq: bool, data: Dict[str, Any]) -> None:
+    key = _cache_key(pair, tf, include_fvg, include_liq)
+    CACHE[key] = {"ts": time.time(), "data": data}
 
 
 def _df_to_ohlc(df) -> Dict[str, List[Any]]:
@@ -61,6 +87,54 @@ def _serialize_signal(result) -> Optional[Dict[str, Any]]:
     }
 
 
+def _compute_snapshot(pair: str, tf: str, include_fvg: bool, include_liq: bool) -> Optional[Dict[str, Any]]:
+    limit = _limit_for_tf(tf)
+    df = fetch_candles(pair, tf, limit)
+    if df is None or df.empty:
+        return None
+
+    pools = detect_liquidity_pools(df) if include_liq else []
+    sweep = detect_liquidity_sweep(df, pools) if include_liq else None
+    fvgs = detect_fvgs(df) if include_fvg else []
+
+    payload = {
+        "ok": True,
+        "pair": pair,
+        "tf": tf,
+        "session_ok": is_in_session(),
+        "ohlc": _df_to_ohlc(df),
+        "pools": [{"level": p.level, "kind": p.kind} for p in pools],
+        "sweep": (
+            {"direction": sweep.direction, "level": sweep.level} if sweep else None
+        ),
+        "fvgs": [
+            {"direction": z.direction, "lower": z.lower, "upper": z.upper, "index": z.index}
+            for z in fvgs
+        ],
+        "signal": None,
+    }
+    return payload
+
+
+def _refresh_async(pair: str, tf: str, include_fvg: bool, include_liq: bool) -> None:
+    key = _cache_key(pair, tf, include_fvg, include_liq)
+    with REFRESH_LOCK:
+        if key in REFRESHING:
+            return
+        REFRESHING.add(key)
+
+    def _worker() -> None:
+        try:
+            payload = _compute_snapshot(pair, tf, include_fvg, include_liq)
+            if payload:
+                _set_cache(pair, tf, include_fvg, include_liq, payload)
+        finally:
+            with REFRESH_LOCK:
+                REFRESHING.discard(key)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 @app.get("/")
 def root():
     return jsonify({"ok": True, "service": "ict-backend"})
@@ -88,37 +162,38 @@ def scan_all():
 def snapshot():
     pair = request.args.get("pair")
     tf = request.args.get("tf", config.TIMEFRAMES["entry"])
+    force = request.args.get("force", "0") == "1"
+    include_fvg = request.args.get("fvg", "1") != "0"
+    include_liq = request.args.get("liq", "1") != "0"
+    since = request.args.get("since", "").strip()
     if not pair:
         return jsonify({"ok": False, "error": "pair is required"}), 400
 
-    limit = _limit_for_tf(tf)
-    df = fetch_candles(pair, tf, limit)
-    if df is None or df.empty:
-        return jsonify({"ok": False, "error": "data unavailable"}), 503
-
-    pools = detect_liquidity_pools(df)
-    sweep = detect_liquidity_sweep(df, pools)
-    fvgs = detect_fvgs(df)
-
     session_ok = is_in_session()
 
-    payload = {
-        "ok": True,
-        "pair": pair,
-        "tf": tf,
-        "session_ok": session_ok,
-        "ohlc": _df_to_ohlc(df),
-        "pools": [{"level": p.level, "kind": p.kind} for p in pools],
-        "sweep": (
-            {"direction": sweep.direction, "level": sweep.level} if sweep else None
-        ),
-        "fvgs": [
-            {"direction": z.direction, "lower": z.lower, "upper": z.upper, "index": z.index}
-            for z in fvgs
-        ],
-        "signal": None,
-    }
+    if not force:
+        key = _cache_key(pair, tf, include_fvg, include_liq)
+        entry = CACHE.get(key)
+        if entry:
+            cached = entry["data"]
+            last_ts = cached.get("ohlc", {}).get("time", [""])[-1]
+            if (time.time() - entry["ts"]) <= CACHE_TTL_SECONDS:
+                if since and since == last_ts:
+                    return jsonify({"ok": True, "not_modified": True, "last": last_ts, "session_ok": session_ok})
+                payload = dict(cached)
+                payload["session_ok"] = session_ok
+                return jsonify(payload)
+            _refresh_async(pair, tf, include_fvg, include_liq)
+            payload = dict(cached)
+            payload["session_ok"] = session_ok
+            payload["stale"] = True
+            return jsonify(payload)
 
+    payload = _compute_snapshot(pair, tf, include_fvg, include_liq)
+    if payload is None:
+        return jsonify({"ok": False, "error": "data unavailable"}), 503
+
+    _set_cache(pair, tf, include_fvg, include_liq, payload)
     return jsonify(payload)
 
 

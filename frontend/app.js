@@ -1,4 +1,6 @@
 const DEFAULT_API_BASE = (window.API_BASE || localStorage.getItem('API_BASE') || '').trim();
+const DEFAULT_WS_BASE = (window.WS_BASE || localStorage.getItem('WS_BASE') || 'wss://stream.binance.com:9443').trim();
+const MAX_BARS = 200;
 
 const pairSelect = document.getElementById('pairSelect');
 const statusEl = document.getElementById('status');
@@ -27,6 +29,7 @@ const apiSaveBtn = document.getElementById('apiSaveBtn');
 const installBtn = document.getElementById('installBtn');
 
 let apiBase = DEFAULT_API_BASE;
+let wsBase = DEFAULT_WS_BASE;
 let timeframes = [];
 let pairs = [];
 let currentTf = '5m';
@@ -35,6 +38,16 @@ let showFvg = false;
 let showLiq = false;
 let lastInteraction = 0;
 let deferredInstallPrompt = null;
+let lastSnapshotTs = {};
+let snapshotAbort = null;
+let lastSnapshotData = null;
+let ws = null;
+let wsConnected = false;
+let wsReconnectTimer = null;
+let wsBackoffMs = 1000;
+let lastWsKey = '';
+let wsRenderTimer = null;
+let statusBaseText = '';
 
 const plotlyConfig = {
   responsive: true,
@@ -45,7 +58,15 @@ const plotlyConfig = {
   modeBarButtonsToRemove: ['select2d', 'lasso2d', 'toImage']
 };
 
-function setStatus(text) { statusEl.textContent = text; }
+function updateStatus() {
+  const liveTag = wsConnected ? ' | LIVE' : '';
+  statusEl.textContent = statusBaseText + liveTag;
+}
+
+function setStatus(text) {
+  statusBaseText = text;
+  updateStatus();
+}
 
 function showApiPanel(show) {
   apiPanel.classList.toggle('hidden', !show);
@@ -92,13 +113,14 @@ function updateToggleStyles() {
   fsToggleLiq.classList.toggle('active', showLiq);
 }
 
-async function fetchJson(path) {
+async function fetchJson(path, options = {}) {
   try {
-    const res = await fetch(`${apiBase}${path}`);
+    const res = await fetch(`${apiBase}${path}`, { signal: options.signal, cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showApiPanel(false);
     return await res.json();
   } catch (err) {
+    if (err && err.name === 'AbortError') return null;
     setStatus(`API error: ${err.message}`);
     showApiPanel(true);
     return null;
@@ -117,6 +139,113 @@ function loadCachedSnapshot(key) {
   } catch (e) {
     return null;
   }
+}
+
+function fmtTime(ms) {
+  return new Date(ms).toISOString().replace('.000Z', 'Z');
+}
+
+function closeWs() {
+  if (ws) {
+    try {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      ws.close();
+    } catch (e) {}
+  }
+  ws = null;
+  wsConnected = false;
+  updateStatus();
+}
+
+function scheduleReconnect() {
+  if (wsReconnectTimer) return;
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    connectWs();
+  }, wsBackoffMs);
+  wsBackoffMs = Math.min(Math.floor(wsBackoffMs * 1.5), 15000);
+}
+
+function handleWsMessage(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch (e) { return; }
+  if (!msg.k || !lastSnapshotData || !lastSnapshotData.ohlc) return;
+
+  const k = msg.k;
+  const ts = fmtTime(k.t);
+  const ohlc = lastSnapshotData.ohlc;
+
+  const lastIdx = ohlc.time.length - 1;
+  if (lastIdx >= 0 && ohlc.time[lastIdx] === ts) {
+    ohlc.open[lastIdx] = Number(k.o);
+    ohlc.high[lastIdx] = Number(k.h);
+    ohlc.low[lastIdx] = Number(k.l);
+    ohlc.close[lastIdx] = Number(k.c);
+  } else {
+    ohlc.time.push(ts);
+    ohlc.open.push(Number(k.o));
+    ohlc.high.push(Number(k.h));
+    ohlc.low.push(Number(k.l));
+    ohlc.close.push(Number(k.c));
+    if (ohlc.time.length > MAX_BARS) {
+      ohlc.time.shift();
+      ohlc.open.shift();
+      ohlc.high.shift();
+      ohlc.low.shift();
+      ohlc.close.shift();
+    }
+  }
+
+  const cacheKey = `snapshot:${pairSelect.value}:${currentTf}`;
+  lastSnapshotTs[cacheKey] = ts;
+
+  if (!wsRenderTimer) {
+    wsRenderTimer = setTimeout(() => {
+      wsRenderTimer = null;
+      renderSnapshot(lastSnapshotData);
+    }, 300);
+  }
+}
+
+function connectWs() {
+  if (!pairSelect.value || !currentTf) return;
+  const key = `${pairSelect.value.toLowerCase()}@kline_${currentTf}`;
+  if (lastWsKey === key && ws) return;
+
+  closeWs();
+  lastWsKey = key;
+  wsBackoffMs = 1000;
+
+  const base = wsBase.replace(/\/$/, '');
+  const url = `${base}/ws/${key}`;
+
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    return;
+  }
+
+  ws.onopen = () => {
+    wsConnected = true;
+    updateStatus();
+  };
+
+  ws.onmessage = (ev) => handleWsMessage(ev.data);
+
+  ws.onclose = () => {
+    wsConnected = false;
+    updateStatus();
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    wsConnected = false;
+    updateStatus();
+    try { ws.close(); } catch (e) {}
+  };
 }
 
 async function loadConfig() {
@@ -276,6 +405,7 @@ function renderSnapshot(data) {
 
   chart.layout.shapes = shapes;
   Plotly.react('chartMain', chart.data, chart.layout, plotlyConfig);
+  lastSnapshotData = data;
 }
 
 async function loadPair() {
@@ -288,18 +418,50 @@ async function loadPair() {
     renderSnapshot(cached);
   }
 
-  const data = await fetchJson(`/api/snapshot?pair=${pair}&tf=${currentTf}`);
-  if (!data || !data.ok) {
-    setStatus(`No data for ${pair}`);
-    Plotly.purge('chartMain');
+  const since = lastSnapshotTs[cacheKey] || '';
+  const params = new URLSearchParams({
+    pair,
+    tf: currentTf,
+    fvg: showFvg ? '1' : '0',
+    liq: showLiq ? '1' : '0'
+  });
+  if (since) params.set('since', since);
+
+  if (snapshotAbort) snapshotAbort.abort();
+  snapshotAbort = new AbortController();
+
+  const data = await fetchJson(`/api/snapshot?${params.toString()}`, { signal: snapshotAbort.signal });
+  if (!data) return;
+
+  if (data.not_modified) {
+    const lastTs = data.last || since;
+    setStatus(`Session ${data.session_ok ? 'ON' : 'OFF'} | ${pair} ${currentTf.toUpperCase()} | Last: ${lastTs}`);
+    connectWs();
     return;
   }
+
+  if (!data.ok) {
+    setStatus(`No data for ${pair}`);
+    Plotly.purge('chartMain');
+    closeWs();
+    return;
+  }
+
+  const lastTs = data.ohlc.time[data.ohlc.time.length - 1] || '';
+  if (lastSnapshotTs[cacheKey] === lastTs) {
+    const staleTag = data.stale ? ' | Stale' : '';
+    setStatus(`Session ${data.session_ok ? 'ON' : 'OFF'} | ${pair} ${currentTf.toUpperCase()} | ${data.ohlc.time.length} candles | Last: ${lastTs}${staleTag}`);
+    connectWs();
+    return;
+  }
+  lastSnapshotTs[cacheKey] = lastTs;
 
   cacheSnapshot(cacheKey, data);
   renderSnapshot(data);
 
-  const lastTs = data.ohlc.time[data.ohlc.time.length - 1] || '';
-  setStatus(`Session ${data.session_ok ? 'ON' : 'OFF'} | ${pair} ${currentTf.toUpperCase()} | ${data.ohlc.time.length} candles | Last: ${lastTs}`);
+  const staleTag = data.stale ? ' | Stale' : '';
+  setStatus(`Session ${data.session_ok ? 'ON' : 'OFF'} | ${pair} ${currentTf.toUpperCase()} | ${data.ohlc.time.length} candles | Last: ${lastTs}${staleTag}`);
+  connectWs();
 }
 
 async function refreshAll() {
@@ -367,8 +529,13 @@ apiSaveBtn.addEventListener('click', async () => {
   apiBase = normalizeBase(apiBaseInput.value.trim());
   if (!apiBase) return;
   localStorage.setItem('API_BASE', apiBase);
+  closeWs();
   await loadConfig();
   await refreshAll();
+});
+
+refreshBtn.addEventListener('click', () => {
+  refreshAll();
 });
 
 chartEl.addEventListener('wheel', () => { lastInteraction = Date.now(); }, { passive: true });
@@ -422,4 +589,4 @@ apiBaseInput.value = apiBase;
   }
 })();
 
-setInterval(refreshAll, 30000);
+setInterval(refreshAll, 20000);
