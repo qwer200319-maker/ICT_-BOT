@@ -47,13 +47,17 @@ const plotlyConfig = {
 
 function setStatus(text) { statusEl.textContent = text; }
 
+function showApiPanel(show) {
+  apiPanel.classList.toggle('hidden', !show);
+}
+
 function normalizeBase(url) {
   return url.replace(/\/$/, '');
 }
 
 function requireBase() {
   if (!apiBase) {
-    apiPanel.classList.remove('hidden');
+    showApiPanel(true);
     setStatus('Set Backend API Base (HTTPS)');
     return false;
   }
@@ -92,9 +96,11 @@ async function fetchJson(path) {
   try {
     const res = await fetch(`${apiBase}${path}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showApiPanel(false);
     return await res.json();
   } catch (err) {
     setStatus(`API error: ${err.message}`);
+    showApiPanel(true);
     return null;
   }
 }
@@ -388,7 +394,20 @@ window.addEventListener('appinstalled', () => {
 });
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('service-worker.js');
+  navigator.serviceWorker.register('service-worker.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      if (!newWorker) return;
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          window.location.reload();
+        }
+      });
+    });
+  });
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();
+  });
 }
 
 apiBaseInput.value = apiBase;
@@ -398,7 +417,7 @@ apiBaseInput.value = apiBase;
     await loadConfig();
     await refreshAll();
   } else {
-    apiPanel.classList.remove('hidden');
+    showApiPanel(true);
     setStatus('Set Backend API Base');
   }
 })();
