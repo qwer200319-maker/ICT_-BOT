@@ -16,10 +16,11 @@ body {
   background: var(--bg); color: var(--text); font-family: "Manrope", sans-serif;
 }
 header {
-  height: 52px; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+  min-height: 52px; display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+  gap: 8px;
 }
-.left, .right { display: flex; align-items: center; gap: 8px; }
+.left, .right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .brand { font-weight: 700; letter-spacing: 0.3px; display: flex; align-items: center; gap: 8px; }
 .brand .accent { color: var(--accent); }
 .logo { width: 28px; height: 28px; border-radius: 6px; }
@@ -30,8 +31,8 @@ header {
 .btn { cursor: pointer; }
 .btn.ghost { background: transparent; }
 .btn.toggle.active { border-color: var(--accent); color: var(--accent); }
-.status { font-size: 12px; color: var(--muted); }
-.tf-bar { display: flex; align-items: center; gap: 6px; }
+.status { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.tf-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .tf-btn {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
   padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12px;
@@ -69,3 +70,26 @@ th { color: var(--muted); font-weight: 600; }
   padding: 6px 8px; border-radius: 8px; z-index: 10;
 }
 .fs-toolbar.show { display: flex; }
+
+/* Mobile optimizations */
+@media (max-width: 900px) {
+  header { align-items: flex-start; }
+  .status { width: 100%; }
+}
+
+@media (max-width: 640px) {
+  header { flex-direction: column; align-items: stretch; }
+  .left, .right { justify-content: flex-start; }
+  .right { gap: 6px; }
+  .select, .btn, #apiBaseInput { font-size: 11px; padding: 6px 8px; }
+  .logo { width: 24px; height: 24px; }
+  main { padding: 6px; }
+  .chart-wrap { min-height: 260px; }
+  .signals { max-height: 180px; }
+}
+
+@media (max-width: 480px) {
+  .tf-bar { overflow-x: auto; }
+  .right { flex-wrap: wrap; }
+  .status { font-size: 11px; }
+}

@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE = localStorage.getItem('API_BASE') || '';
+const DEFAULT_API_BASE = (window.API_BASE || localStorage.getItem('API_BASE') || '').trim();
 
 const pairSelect = document.getElementById('pairSelect');
 const statusEl = document.getElementById('status');
@@ -54,7 +54,7 @@ function normalizeBase(url) {
 function requireBase() {
   if (!apiBase) {
     apiPanel.classList.remove('hidden');
-    setStatus('Set Backend API Base');
+    setStatus('Set Backend API Base (HTTPS)');
     return false;
   }
   return true;
@@ -89,16 +89,18 @@ function updateToggleStyles() {
 }
 
 async function fetchJson(path) {
-  const res = await fetch(`${apiBase}${path}`);
-  return res.json();
+  try {
+    const res = await fetch(`${apiBase}${path}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    setStatus(`API error: ${err.message}`);
+    return null;
+  }
 }
 
 function cacheSnapshot(key, data) {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch (e) {
-    // ignore
-  }
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) {}
 }
 
 function loadCachedSnapshot(key) {
@@ -114,6 +116,7 @@ function loadCachedSnapshot(key) {
 async function loadConfig() {
   if (!requireBase()) return;
   const data = await fetchJson('/api/scan_all');
+  if (!data) return;
   pairs = data.pairs || [];
   timeframes = ['1h','15m','5m'];
   currentTf = timeframes.includes('15m') ? '15m' : (timeframes[0] || '5m');
@@ -130,6 +133,7 @@ function renderAllTf() {
 async function loadSignals() {
   if (!requireBase()) return;
   const data = await fetchJson('/api/scan_all');
+  if (!data) return;
   const sessionText = data.session_ok ? 'Session ON' : 'Session OFF';
   setStatus(sessionText);
 
@@ -273,14 +277,13 @@ async function loadPair() {
   const pair = pairSelect.value;
   const cacheKey = `snapshot:${pair}:${currentTf}`;
 
-  // render cached snapshot immediately
   const cached = loadCachedSnapshot(cacheKey);
   if (cached && cached.ohlc && cached.ohlc.time) {
     renderSnapshot(cached);
   }
 
   const data = await fetchJson(`/api/snapshot?pair=${pair}&tf=${currentTf}`);
-  if (!data.ok) {
+  if (!data || !data.ok) {
     setStatus(`No data for ${pair}`);
     Plotly.purge('chartMain');
     return;
