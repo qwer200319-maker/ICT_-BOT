@@ -7,7 +7,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, request\nfrom flask_sock import Sock
+from flask import Flask, jsonify, request
+from flask_sock import Sock
 from flask_cors import CORS
 
 # Ensure project root is on sys.path when running directly
@@ -22,7 +23,8 @@ from strategy.fvg_detector import detect_fvgs
 from strategy.liquidity_detector import detect_liquidity_pools, detect_liquidity_sweep
 from utils.session_filter import is_in_session
 
-app = Flask(__name__)\nsock = Sock(app)
+app = Flask(__name__)
+sock = Sock(app)
 
 # Allow frontend (Vercel) to call backend (Render)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -262,3 +264,4 @@ def ws_proxy(ws, stream: str):
             upstream.close()
         except Exception:
             pass
+
