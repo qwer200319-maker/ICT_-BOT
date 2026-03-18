@@ -559,18 +559,26 @@ async function refreshAll() {
   await loadPair();
 }
 
-fullscreenBtn.addEventListener('click', () => {
-  if (chartWrap.requestFullscreen) chartWrap.requestFullscreen();
-});
+fullscreenBtn
+function enterFullscreenFallback() {
+  chartWrap.classList.add('fullscreen-fallback');
+  document.body.classList.add('fullscreen-mode');
+  fsToolbar.classList.add('show');
+}
+function exitFullscreenFallback() {
+  chartWrap.classList.remove('fullscreen-fallback');
+  document.body.classList.remove('fullscreen-mode');
+  fsToolbar.classList.remove('show');
+}
+fullscreenBtn.addEventListener('click', () => {\n  if (document.fullscreenElement) {\n    document.exitFullscreen();\n    return;\n  }\n  if (chartWrap.requestFullscreen) {\n    chartWrap.requestFullscreen();\n  } else {
+    enterFullscreenFallback();
+  }\n});
 
-fsExitBtn.addEventListener('click', () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-});
+fsExitBtn.addEventListener('click', () => {\n  if (document.fullscreenElement) {\n    document.exitFullscreen();\n  } else {
+    exitFullscreenFallback();
+  }\n});
 
-document.addEventListener('fullscreenchange', () => {
-  const isFs = !!document.fullscreenElement;
-  fsToolbar.classList.toggle('show', isFs);
-});
+document.addEventListener('fullscreenchange', () => {\n  const isFs = !!document.fullscreenElement;\n  fsToolbar.classList.toggle('show', isFs);\n  if (isFs) {\n    document.body.classList.add('fullscreen-mode');\n  } else {\n    document.body.classList.remove('fullscreen-mode');\n    chartWrap.classList.remove('fullscreen-fallback');\n  }\n});
 
 toggleSignalsBtn.addEventListener('click', () => {
   signalsVisible = !signalsVisible;
@@ -683,4 +691,5 @@ apiBaseInput.value = apiBase;
 })();
 
 setInterval(refreshAll, 20000);
+
 
