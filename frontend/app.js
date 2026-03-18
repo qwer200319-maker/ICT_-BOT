@@ -1,6 +1,6 @@
 const DEFAULT_API_BASE = (window.API_BASE || localStorage.getItem('API_BASE') || '').trim();
 const DEFAULT_WS_BASE = (window.WS_BASE || localStorage.getItem('WS_BASE') || 'wss://stream.binance.com:9443').trim();
-const MAX_BARS = 200;
+const MAX_BARS = 500;
 
 const pairSelect = document.getElementById('pairSelect');
 const statusEl = document.getElementById('status');
@@ -34,13 +34,14 @@ let timeframes = [];
 let pairs = [];
 let currentTf = '5m';
 let signalsVisible = true;
-let showFvg = false;
-let showLiq = false;
+let showFvg = (localStorage.getItem('SHOW_FVG') ?? '1') === '1';
+let showLiq = (localStorage.getItem('SHOW_LIQ') ?? '1') === '1';
 let lastInteraction = 0;
 let deferredInstallPrompt = null;
 let lastSnapshotTs = {};
 let snapshotAbort = null;
 let lastSnapshotData = null;
+let forceNextSnapshot = false;
 let ws = null;
 let wsConnected = false;
 let wsReconnectTimer = null;
@@ -53,6 +54,7 @@ const plotlyConfig = {
   responsive: true,
   displaylogo: false,
   displayModeBar: 'hover',
+  modeBarButtonsToAdd: ['zoom2d','pan2d','zoomIn2d','zoomOut2d','autoScale2d','resetScale2d'],
   scrollZoom: true,
   doubleClick: 'reset',
   modeBarButtonsToRemove: ['select2d', 'lasso2d', 'toImage']
@@ -114,13 +116,25 @@ function updateToggleStyles() {
 }
 
 async function fetchJson(path, options = {}) {
+  const controller = options.signal ? null : new AbortController();
+  const signal = options.signal || (controller ? controller.signal : undefined);
+  const timeout = setTimeout(() => {
+    try { controller && controller.abort(); } catch (e) {}
+  }, 8000);
+
   try {
-    const res = await fetch(`${apiBase}${path}`, { signal: options.signal, cache: 'no-store' });
+    const res = await fetch(`${apiBase}${path}`, { signal, cache: 'no-store' });
+    clearTimeout(timeout);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showApiPanel(false);
     return await res.json();
   } catch (err) {
-    if (err && err.name === 'AbortError') return null;
+    clearTimeout(timeout);
+    if (err && err.name === 'AbortError') {
+      setStatus('API timeout');
+      showApiPanel(true);
+      return null;
+    }
     setStatus(`API error: ${err.message}`);
     showApiPanel(true);
     return null;
@@ -143,6 +157,13 @@ function loadCachedSnapshot(key) {
 
 function fmtTime(ms) {
   return new Date(ms).toISOString().replace('.000Z', 'Z');
+}
+
+function formatPrice(p) {
+  if (!isFinite(p)) return '';
+  if (p >= 1000) return p.toFixed(2);
+  if (p >= 1) return p.toFixed(4);
+  return p.toFixed(6);
 }
 
 function closeWs() {
@@ -338,7 +359,8 @@ function makeCandles(ohlc, title) {
         spikemode: 'across',
         spikesnap: 'cursor',
         spikecolor: '#8a8f98',
-        spikethickness: 1
+        spikethickness: 1,
+        fixedrange: false
       },
       yaxis: {
         showgrid: true,
@@ -348,9 +370,10 @@ function makeCandles(ohlc, title) {
         showspikes: true,
         spikemode: 'across',
         spikecolor: '#8a8f98',
-        spikethickness: 1
+        spikethickness: 1,
+        fixedrange: false
       },
-      margin: { l: 55, r: 15, t: 28, b: 30 },
+      margin: { l: 55, r: 55, t: 28, b: 30 },
       paper_bgcolor: '#131722',
       plot_bgcolor: '#131722',
       font: { color: '#d1d4dc' }
@@ -367,15 +390,15 @@ function buildLevelShapes(times, levels) {
     type: 'line',
     x0, x1,
     y0: l.level, y1: l.level,
-    line: { color: l.color || '#888', width: 1 },
-    opacity: 0.5,
-    layer: 'below'
+    line: { color: l.color || '#3f7cff', width: 1.2 },
+    opacity: 0.8,
+    layer: 'above'
   }));
 }
 
 function buildFvgShapes(times, fvgs) {
   const shapes = [];
-  const recent = fvgs.slice(-3);
+  const recent = fvgs.slice(-6);
   recent.forEach(z => {
     const x0 = times[Math.max(z.index - 2, 0)];
     const x1 = times[times.length - 1];
@@ -385,14 +408,67 @@ function buildFvgShapes(times, fvgs) {
   return shapes;
 }
 
+function buildFallbackLiquidity(ohlc) {
+  if (!ohlc || !ohlc.high || !ohlc.low) return [];
+  const highs = ohlc.high.map(Number);
+  const lows = ohlc.low.map(Number);
+  if (!highs.length || !lows.length) return [];
+  const tail = 120;
+  const h = Math.max(...highs.slice(-tail));
+  const l = Math.min(...lows.slice(-tail));
+  return [
+    { level: h, color: '#3f7cff' },
+    { level: l, color: '#3f7cff' }
+  ];
+}
+
+function buildPriceLine(lastClose, prevClose) {
+  if (!isFinite(lastClose)) return { shapes: [], annotations: [] };
+  const color = lastClose >= prevClose ? '#26a69a' : '#ef5350';
+  const label = formatPrice(lastClose);
+  return {
+    shapes: [{
+      type: 'line',
+      xref: 'paper',
+      x0: 0,
+      x1: 1,
+      y0: lastClose,
+      y1: lastClose,
+      line: { color, width: 1, dash: 'dot' },
+      opacity: 0.9,
+      layer: 'above'
+    }],
+    annotations: [{
+      xref: 'paper',
+      x: 1,
+      yref: 'y',
+      y: lastClose,
+      text: label,
+      showarrow: false,
+      bgcolor: color,
+      bordercolor: color,
+      font: { color: '#0b0f18', size: 11 },
+      xanchor: 'right',
+      yanchor: 'middle',
+      align: 'right',
+      borderpad: 4,
+      xshift: -6
+    }]
+  };
+}
+
 function renderSnapshot(data) {
   const title = `${data.pair} - ${data.tf.toUpperCase()}`;
   const chart = makeCandles(data.ohlc, title);
 
   const shapes = [];
   if (showLiq) {
-    const levels = [];
-    data.pools.slice(-5).forEach(p => levels.push({ level: p.level, color: '#3f7cff' }));
+    let levels = [];
+    if (data.pools && data.pools.length) {
+      data.pools.slice(-5).forEach(p => levels.push({ level: p.level, color: '#3f7cff' }));
+    } else {
+      levels = buildFallbackLiquidity(data.ohlc);
+    }
     if (data.sweep) {
       levels.push({ level: data.sweep.level, color: data.sweep.direction === 'bearish' ? '#ef5350' : '#26a69a' });
     }
@@ -400,10 +476,17 @@ function renderSnapshot(data) {
   }
 
   if (showFvg) {
-    shapes.push(...buildFvgShapes(chart._times, data.fvgs));
+    shapes.push(...buildFvgShapes(chart._times, data.fvgs || []));
   }
 
-  chart.layout.shapes = shapes;
+  const closes = data.ohlc.close || [];
+  const lastClose = closes.length ? Number(closes[closes.length - 1]) : NaN;
+  const prevClose = closes.length > 1 ? Number(closes[closes.length - 2]) : lastClose;
+  const priceOverlay = buildPriceLine(lastClose, prevClose);
+
+  chart.layout.shapes = shapes.concat(priceOverlay.shapes);
+  chart.layout.annotations = priceOverlay.annotations;
+
   Plotly.react('chartMain', chart.data, chart.layout, plotlyConfig);
   lastSnapshotData = data;
 }
@@ -425,12 +508,14 @@ async function loadPair() {
     fvg: showFvg ? '1' : '0',
     liq: showLiq ? '1' : '0'
   });
-  if (since) params.set('since', since);
+  if (forceNextSnapshot) params.set('force', '1');
+  if (since && !forceNextSnapshot) params.set('since', since);
 
   if (snapshotAbort) snapshotAbort.abort();
   snapshotAbort = new AbortController();
 
   const data = await fetchJson(`/api/snapshot?${params.toString()}`, { signal: snapshotAbort.signal });
+  forceNextSnapshot = false;
   if (!data) return;
 
   if (data.not_modified) {
@@ -494,24 +579,28 @@ toggleSignalsBtn.addEventListener('click', () => {
 
 toggleFvgBtn.addEventListener('click', () => {
   showFvg = !showFvg;
+  localStorage.setItem('SHOW_FVG', showFvg ? '1' : '0');
   updateToggleStyles();
   loadPair();
 });
 
 toggleLiqBtn.addEventListener('click', () => {
   showLiq = !showLiq;
+  localStorage.setItem('SHOW_LIQ', showLiq ? '1' : '0');
   updateToggleStyles();
   loadPair();
 });
 
 fsToggleFvg.addEventListener('click', () => {
   showFvg = !showFvg;
+  localStorage.setItem('SHOW_FVG', showFvg ? '1' : '0');
   updateToggleStyles();
   loadPair();
 });
 
 fsToggleLiq.addEventListener('click', () => {
   showLiq = !showLiq;
+  localStorage.setItem('SHOW_LIQ', showLiq ? '1' : '0');
   updateToggleStyles();
   loadPair();
 });
@@ -535,6 +624,7 @@ apiSaveBtn.addEventListener('click', async () => {
 });
 
 refreshBtn.addEventListener('click', () => {
+  forceNextSnapshot = true;
   refreshAll();
 });
 
@@ -562,6 +652,7 @@ window.addEventListener('appinstalled', () => {
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('service-worker.js').then((reg) => {
+    try { reg.update(); } catch (e) {}
     reg.addEventListener('updatefound', () => {
       const newWorker = reg.installing;
       if (!newWorker) return;
@@ -580,6 +671,8 @@ if ('serviceWorker' in navigator) {
 apiBaseInput.value = apiBase;
 
 (async () => {
+  setStatus('Loading...');
+  updateToggleStyles();
   if (apiBase) {
     await loadConfig();
     await refreshAll();
@@ -590,3 +683,4 @@ apiBaseInput.value = apiBase;
 })();
 
 setInterval(refreshAll, 20000);
+
