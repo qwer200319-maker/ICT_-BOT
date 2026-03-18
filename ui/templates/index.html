@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ICT Trading Bot Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <style>
+    :root {
+      --bg: #131722;
+      --panel: #0f1420;
+      --panel-2: #161b26;
+      --border: #2a2e39;
+      --text: #d1d4dc;
+      --muted: #8a8f98;
+      --accent: #f0b90b;
+      --green: #26a69a;
+      --red: #ef5350;
+      --blue: #3f7cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; height: 100vh; display: flex; flex-direction: column;
+      background: var(--bg); color: var(--text); font-family: "Manrope", sans-serif;
+    }
+    header {
+      height: 52px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .left, .right { display: flex; align-items: center; gap: 8px; }
+    .brand { font-weight: 700; letter-spacing: 0.3px; }
+    .brand .accent { color: var(--accent); }
+    .select, .btn {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      padding: 6px 10px; border-radius: 6px; font-size: 12px;
+    }
+    .btn { cursor: pointer; }
+    .btn.ghost { background: transparent; }
+    .btn.toggle.active { border-color: var(--accent); color: var(--accent); }
+    .status { font-size: 12px; color: var(--muted); }
+    .tf-bar { display: flex; align-items: center; gap: 6px; }
+    .tf-btn {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12px;
+    }
+    .tf-btn.active { border-color: var(--accent); color: var(--accent); }
+
+    main { flex: 1; display: flex; flex-direction: column; padding: 8px 12px 12px; gap: 8px; }
+    .chart-wrap { flex: 1; min-height: 320px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; position: relative; }
+    #chartMain { width: 100%; height: 100%; }
+
+    .signals {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+      max-height: 220px; overflow: auto;
+    }
+    .signals h3 { margin: 0 0 8px 0; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-bottom: 1px solid var(--border); padding: 6px; text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .hidden { display: none; }
+
+    /* Fullscreen overlay controls */
+    .fs-toolbar {
+      position: absolute; top: 10px; left: 10px; right: 10px;
+      display: none; gap: 8px; align-items: center; flex-wrap: wrap;
+      background: rgba(15,20,32,0.85); border: 1px solid var(--border);
+      padding: 6px 8px; border-radius: 8px; z-index: 10;
+    }
+    .fs-toolbar.show { display: flex; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="left">
+      <div class="brand"><span class="accent">ICT</span> Bot</div>
+      <select id="pairSelect" class="select"></select>
+      <div id="tfButtons" class="tf-bar"></div>
+    </div>
+    <div class="right">
+      <div id="status" class="status">Loading...</div>
+      <button id="toggleFvgBtn" class="btn toggle">FVG</button>
+      <button id="toggleLiqBtn" class="btn toggle">Liquidity</button>
+      <button id="refreshBtn" class="btn">Refresh</button>
+      <button id="toggleSignalsBtn" class="btn ghost">Signals</button>
+      <button id="fullscreenBtn" class="btn">Full Screen</button>
+    </div>
+  </header>
+
+  <div id="app" data-pairs='{{ pairs | tojson }}' data-refresh='{{ refresh_seconds }}' data-tfs='{{ timeframes | tojson }}'></div>
+
+  <main>
+    <div class="chart-wrap" id="chartWrap">
+      <div class="fs-toolbar" id="fsToolbar">
+        <select id="fsPairSelect" class="select"></select>
+        <div id="fsTfButtons" class="tf-bar"></div>
+        <button id="fsToggleFvg" class="btn toggle">FVG</button>
+        <button id="fsToggleLiq" class="btn toggle">Liquidity</button>
+        <button id="fsExitBtn" class="btn">Exit Full Screen</button>
+      </div>
+      <div id="chartMain"></div>
+    </div>
+    <div id="signalsPanel" class="signals">
+      <h3>Open Signals</h3>
+      <div id="signalsEmpty" style="color:var(--muted);">No signals right now.</div>
+      <table id="signalsTable" class="hidden">
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Dir</th>
+            <th>Entry</th>
+            <th>SL</th>
+            <th>TP</th>
+            <th>R/R</th>
+            <th>Reason</th>
+            <th>UTC</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const appEl = document.getElementById('app');
+    const pairs = JSON.parse(appEl.dataset.pairs || '[]');
+    const refreshSeconds = parseInt(appEl.dataset.refresh || '30', 10);
+    const timeframes = JSON.parse(appEl.dataset.tfs || '[]');
+
+    const pairSelect = document.getElementById('pairSelect');
+    const statusEl = document.getElementById('status');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const signalsTable = document.getElementById('signalsTable');
+    const signalsBody = signalsTable.querySelector('tbody');
+    const signalsEmpty = document.getElementById('signalsEmpty');
+    const tfButtons = document.getElementById('tfButtons');
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const toggleSignalsBtn = document.getElementById('toggleSignalsBtn');
+    const signalsPanel = document.getElementById('signalsPanel');
+    const toggleFvgBtn = document.getElementById('toggleFvgBtn');
+    const toggleLiqBtn = document.getElementById('toggleLiqBtn');
+    const chartEl = document.getElementById('chartMain');
+
+    const chartWrap = document.getElementById('chartWrap');
+    const fsToolbar = document.getElementById('fsToolbar');
+    const fsPairSelect = document.getElementById('fsPairSelect');
+    const fsTfButtons = document.getElementById('fsTfButtons');
+    const fsToggleFvg = document.getElementById('fsToggleFvg');
+    const fsToggleLiq = document.getElementById('fsToggleLiq');
+    const fsExitBtn = document.getElementById('fsExitBtn');
+
+    let currentTf = timeframes.includes('15m') ? '15m' : (timeframes[0] || '5m');
+    let signalsVisible = true;
+    let showFvg = false;
+    let showLiq = false;
+    let lastInteraction = 0;
+
+    const plotlyConfig = {
+      responsive: true,
+      displaylogo: false,
+      displayModeBar: 'hover',
+      scrollZoom: true,
+      doubleClick: 'reset',
+      modeBarButtonsToRemove: ['select2d', 'lasso2d', 'toImage']
+    };
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function fillPairs(selectEl) {
+      selectEl.innerHTML = '';
+      pairs.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p;
+        selectEl.appendChild(opt);
+      });
+    }
+
+    function renderTfButtons(container, onClick) {
+      container.innerHTML = '';
+      timeframes.forEach(tf => {
+        const btn = document.createElement('button');
+        btn.className = `tf-btn ${tf === currentTf ? 'active' : ''}`;
+        btn.textContent = tf.toUpperCase();
+        btn.addEventListener('click', () => onClick(tf));
+        container.appendChild(btn);
+      });
+    }
+
+    function updateToggleStyles() {
+      toggleFvgBtn.classList.toggle('active', showFvg);
+      toggleLiqBtn.classList.toggle('active', showLiq);
+      fsToggleFvg.classList.toggle('active', showFvg);
+      fsToggleLiq.classList.toggle('active', showLiq);
+    }
+
+    async function loadSignals() {
+      const res = await fetch('/api/scan_all');
+      const data = await res.json();
+      const sessionText = data.session_ok ? 'Session ON' : 'Session OFF';
+      setStatus(sessionText);
+
+      signalsBody.innerHTML = '';
+      if (!data.signals || data.signals.length === 0) {
+        signalsTable.classList.add('hidden');
+        signalsEmpty.style.display = 'block';
+        return;
+      }
+      signalsEmpty.style.display = 'none';
+      signalsTable.classList.remove('hidden');
+      data.signals.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${s.pair}</td>
+          <td style="color:${s.direction === 'LONG' ? 'var(--green)' : 'var(--red)'}">${s.direction}</td>
+          <td>${s.entry.toFixed(6)}</td>
+          <td>${s.stop_loss.toFixed(6)}</td>
+          <td>${s.take_profit.toFixed(6)}</td>
+          <td>${s.risk_reward.toFixed(2)}</td>
+          <td>${s.reason}</td>
+          <td>${s.timestamp_utc}</td>
+        `;
+        signalsBody.appendChild(tr);
+      });
+    }
+
+    function makeCandles(ohlc, title) {
+      const parsed = ohlc.time.map(t => new Date(t));
+      const validDates = parsed.every(d => !isNaN(d.getTime()));
+      const times = validDates ? parsed : ohlc.time.map((_, i) => i);
+      const x0 = times[0];
+      const x1 = times[times.length - 1];
+      const open = ohlc.open.map(Number);
+      const high = ohlc.high.map(Number);
+      const low = ohlc.low.map(Number);
+      const close = ohlc.close.map(Number);
+
+      return {
+        data: [
+          {
+            x: times,
+            open,
+            high,
+            low,
+            close,
+            type: 'candlestick',
+            increasing: { line: { color: '#26a69a', width: 1 }, fillcolor: '#26a69a' },
+            decreasing: { line: { color: '#ef5350', width: 1 }, fillcolor: '#ef5350' },
+            whiskerwidth: 0.6
+          }
+        ],
+        layout: {
+          title: { text: title, font: { size: 12, color: '#8a8f98' } },
+          hovermode: 'x',
+          dragmode: 'pan',
+          uirevision: `${pairSelect.value}-${currentTf}`,
+          xaxis: {
+            type: validDates ? 'date' : 'linear',
+            range: validDates ? [x0, x1] : undefined,
+            rangeslider: { visible: false },
+            showgrid: true,
+            gridcolor: '#2a2e39',
+            showline: true,
+            linecolor: '#2a2e39',
+            showspikes: true,
+            spikemode: 'across',
+            spikesnap: 'cursor',
+            spikecolor: '#8a8f98',
+            spikethickness: 1
+          },
+          yaxis: {
+            showgrid: true,
+            gridcolor: '#2a2e39',
+            showline: true,
+            linecolor: '#2a2e39',
+            showspikes: true,
+            spikemode: 'across',
+            spikecolor: '#8a8f98',
+            spikethickness: 1
+          },
+          margin: { l: 55, r: 15, t: 28, b: 30 },
+          paper_bgcolor: '#131722',
+          plot_bgcolor: '#131722',
+          font: { color: '#d1d4dc' }
+        },
+        _times: times
+      };
+    }
+
+    function buildLevelShapes(times, levels) {
+      if (!levels || levels.length === 0) return [];
+      const x0 = times[0];
+      const x1 = times[times.length - 1];
+      return levels.map(l => ({
+        type: 'line',
+        x0, x1,
+        y0: l.level, y1: l.level,
+        line: { color: l.color || '#888', width: 1 },
+        opacity: 0.5,
+        layer: 'below'
+      }));
+    }
+
+    function buildFvgShapes(times, fvgs) {
+      const shapes = [];
+      const recent = fvgs.slice(-3);
+      recent.forEach(z => {
+        const x0 = times[Math.max(z.index - 2, 0)];
+        const x1 = times[times.length - 1];
+        const color = z.direction === 'bullish' ? 'rgba(38,166,154,0.10)' : 'rgba(239,83,80,0.10)';
+        shapes.push({ type: 'rect', x0, x1, y0: z.lower, y1: z.upper, fillcolor: color, line: { width: 0 }, layer: 'below' });
+      });
+      return shapes;
+    }
+
+    async function loadPair() {
+      const pair = pairSelect.value;
+      const res = await fetch(`/api/snapshot?pair=${pair}&tf=${currentTf}`);
+      const data = await res.json();
+      if (!data.ok) {
+        setStatus(`No data for ${pair}`);
+        Plotly.purge('chartMain');
+        return;
+      }
+
+      const title = `${pair} - ${currentTf.toUpperCase()}`;
+      const chart = makeCandles(data.ohlc, title);
+
+      const shapes = [];
+      if (showLiq) {
+        const levels = [];
+        data.pools.slice(-5).forEach(p => levels.push({ level: p.level, color: '#3f7cff' }));
+        if (data.sweep) {
+          levels.push({ level: data.sweep.level, color: data.sweep.direction === 'bearish' ? '#ef5350' : '#26a69a' });
+        }
+        shapes.push(...buildLevelShapes(chart._times, levels));
+      }
+
+      if (showFvg) {
+        shapes.push(...buildFvgShapes(chart._times, data.fvgs));
+      }
+
+      chart.layout.shapes = shapes;
+
+      Plotly.react('chartMain', chart.data, chart.layout, plotlyConfig);
+
+      const lastTs = data.ohlc.time[data.ohlc.time.length - 1] || '';
+      setStatus(`Session ${data.session_ok ? 'ON' : 'OFF'} | ${pair} ${currentTf.toUpperCase()} | ${data.ohlc.time.length} candles | Last: ${lastTs}`);
+    }
+
+    async function refreshAll() {
+      const now = Date.now();
+      if (now - lastInteraction < 1200) {
+        await loadSignals();
+        return;
+      }
+      await loadSignals();
+      await loadPair();
+    }
+
+    fullscreenBtn.addEventListener('click', () => {
+      if (chartWrap.requestFullscreen) chartWrap.requestFullscreen();
+    });
+
+    fsExitBtn.addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      const isFs = !!document.fullscreenElement;
+      fsToolbar.classList.toggle('show', isFs);
+    });
+
+    toggleSignalsBtn.addEventListener('click', () => {
+      signalsVisible = !signalsVisible;
+      signalsPanel.style.display = signalsVisible ? 'block' : 'none';
+    });
+
+    toggleFvgBtn.addEventListener('click', () => {
+      showFvg = !showFvg;
+      updateToggleStyles();
+      loadPair();
+    });
+
+    toggleLiqBtn.addEventListener('click', () => {
+      showLiq = !showLiq;
+      updateToggleStyles();
+      loadPair();
+    });
+
+    fsToggleFvg.addEventListener('click', () => {
+      showFvg = !showFvg;
+      updateToggleStyles();
+      loadPair();
+    });
+
+    fsToggleLiq.addEventListener('click', () => {
+      showLiq = !showLiq;
+      updateToggleStyles();
+      loadPair();
+    });
+
+    fsPairSelect.addEventListener('change', () => {
+      pairSelect.value = fsPairSelect.value;
+      loadPair();
+    });
+
+    chartEl.addEventListener('wheel', () => { lastInteraction = Date.now(); }, { passive: true });
+    chartEl.addEventListener('mousedown', () => { lastInteraction = Date.now(); });
+    chartEl.addEventListener('touchstart', () => { lastInteraction = Date.now(); }, { passive: true });
+
+    fillPairs(pairSelect);
+    fillPairs(fsPairSelect);
+
+    renderTfButtons(tfButtons, (tf) => {
+      currentTf = tf; renderTfButtons(tfButtons, arguments.callee); renderTfButtons(fsTfButtons, arguments.callee); loadPair();
+    });
+
+    renderTfButtons(fsTfButtons, (tf) => {
+      currentTf = tf; renderTfButtons(tfButtons, arguments.callee); renderTfButtons(fsTfButtons, arguments.callee); loadPair();
+    });
+
+    updateToggleStyles();
+    refreshBtn.addEventListener('click', refreshAll);
+    pairSelect.addEventListener('change', () => { fsPairSelect.value = pairSelect.value; loadPair(); });
+
+    refreshAll();
+    setInterval(refreshAll, refreshSeconds * 1000);
+  </script>
+</body>
+</html>

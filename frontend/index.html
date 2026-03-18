@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ICT Trading Bot Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="left">
+      <div class="brand"><span class="accent">ICT</span> Bot</div>
+      <select id="pairSelect" class="select"></select>
+      <div id="tfButtons" class="tf-bar"></div>
+    </div>
+    <div class="right">
+      <div id="status" class="status">Loading...</div>
+      <button id="toggleFvgBtn" class="btn toggle">FVG</button>
+      <button id="toggleLiqBtn" class="btn toggle">Liquidity</button>
+      <button id="apiBtn" class="btn ghost">API</button>
+      <button id="refreshBtn" class="btn">Refresh</button>
+      <button id="toggleSignalsBtn" class="btn ghost">Signals</button>
+      <button id="fullscreenBtn" class="btn">Full Screen</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="apiPanel" class="api-panel hidden">
+      <div class="api-row">
+        <label>Backend API Base</label>
+        <input id="apiBaseInput" type="text" placeholder="https://your-render-app.onrender.com" />
+        <button id="apiSaveBtn" class="btn">Save</button>
+      </div>
+      <div class="api-hint">Example: https://your-app.onrender.com</div>
+    </div>
+
+    <div class="chart-wrap" id="chartWrap">
+      <div class="fs-toolbar" id="fsToolbar">
+        <select id="fsPairSelect" class="select"></select>
+        <div id="fsTfButtons" class="tf-bar"></div>
+        <button id="fsToggleFvg" class="btn toggle">FVG</button>
+        <button id="fsToggleLiq" class="btn toggle">Liquidity</button>
+        <button id="fsExitBtn" class="btn">Exit Full Screen</button>
+      </div>
+      <div id="chartMain"></div>
+    </div>
+
+    <div id="signalsPanel" class="signals">
+      <h3>Open Signals</h3>
+      <div id="signalsEmpty" class="muted">No signals right now.</div>
+      <table id="signalsTable" class="hidden">
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Dir</th>
+            <th>Entry</th>
+            <th>SL</th>
+            <th>TP</th>
+            <th>R/R</th>
+            <th>Reason</th>
+            <th>UTC</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
