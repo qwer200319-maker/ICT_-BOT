@@ -20,8 +20,9 @@ header {
   padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--panel);
 }
 .left, .right { display: flex; align-items: center; gap: 8px; }
-.brand { font-weight: 700; letter-spacing: 0.3px; }
+.brand { font-weight: 700; letter-spacing: 0.3px; display: flex; align-items: center; gap: 8px; }
 .brand .accent { color: var(--accent); }
+.logo { width: 28px; height: 28px; border-radius: 6px; }
 .select, .btn, #apiBaseInput {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
   padding: 6px 10px; border-radius: 6px; font-size: 12px;

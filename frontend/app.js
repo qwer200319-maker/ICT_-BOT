@@ -24,6 +24,7 @@ const apiBtn = document.getElementById('apiBtn');
 const apiPanel = document.getElementById('apiPanel');
 const apiBaseInput = document.getElementById('apiBaseInput');
 const apiSaveBtn = document.getElementById('apiSaveBtn');
+const installBtn = document.getElementById('installBtn');
 
 let apiBase = DEFAULT_API_BASE;
 let timeframes = [];
@@ -33,6 +34,7 @@ let signalsVisible = true;
 let showFvg = false;
 let showLiq = false;
 let lastInteraction = 0;
+let deferredInstallPrompt = null;
 
 const plotlyConfig = {
   responsive: true,
@@ -89,6 +91,24 @@ function updateToggleStyles() {
 async function fetchJson(path) {
   const res = await fetch(`${apiBase}${path}`);
   return res.json();
+}
+
+function cacheSnapshot(key, data) {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    // ignore
+  }
+}
+
+function loadCachedSnapshot(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
 }
 
 async function loadConfig() {
@@ -226,17 +246,8 @@ function buildFvgShapes(times, fvgs) {
   return shapes;
 }
 
-async function loadPair() {
-  if (!requireBase()) return;
-  const pair = pairSelect.value;
-  const data = await fetchJson(`/api/snapshot?pair=${pair}&tf=${currentTf}`);
-  if (!data.ok) {
-    setStatus(`No data for ${pair}`);
-    Plotly.purge('chartMain');
-    return;
-  }
-
-  const title = `${pair} - ${currentTf.toUpperCase()}`;
+function renderSnapshot(data) {
+  const title = `${data.pair} - ${data.tf.toUpperCase()}`;
   const chart = makeCandles(data.ohlc, title);
 
   const shapes = [];
@@ -254,8 +265,29 @@ async function loadPair() {
   }
 
   chart.layout.shapes = shapes;
-
   Plotly.react('chartMain', chart.data, chart.layout, plotlyConfig);
+}
+
+async function loadPair() {
+  if (!requireBase()) return;
+  const pair = pairSelect.value;
+  const cacheKey = `snapshot:${pair}:${currentTf}`;
+
+  // render cached snapshot immediately
+  const cached = loadCachedSnapshot(cacheKey);
+  if (cached && cached.ohlc && cached.ohlc.time) {
+    renderSnapshot(cached);
+  }
+
+  const data = await fetchJson(`/api/snapshot?pair=${pair}&tf=${currentTf}`);
+  if (!data.ok) {
+    setStatus(`No data for ${pair}`);
+    Plotly.purge('chartMain');
+    return;
+  }
+
+  cacheSnapshot(cacheKey, data);
+  renderSnapshot(data);
 
   const lastTs = data.ohlc.time[data.ohlc.time.length - 1] || '';
   setStatus(`Session ${data.session_ok ? 'ON' : 'OFF'} | ${pair} ${currentTf.toUpperCase()} | ${data.ohlc.time.length} candles | Last: ${lastTs}`);
@@ -333,6 +365,28 @@ apiSaveBtn.addEventListener('click', async () => {
 chartEl.addEventListener('wheel', () => { lastInteraction = Date.now(); }, { passive: true });
 chartEl.addEventListener('mousedown', () => { lastInteraction = Date.now(); });
 chartEl.addEventListener('touchstart', () => { lastInteraction = Date.now(); }, { passive: true });
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  installBtn.classList.remove('hidden');
+});
+
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installBtn.classList.add('hidden');
+});
+
+window.addEventListener('appinstalled', () => {
+  installBtn.classList.add('hidden');
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('service-worker.js');
+}
 
 apiBaseInput.value = apiBase;
 

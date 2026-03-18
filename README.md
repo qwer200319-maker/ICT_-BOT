@@ -1,5 +1,18 @@
 # ICT Trading Bot (Vercel UI + Render Backend + Render Worker)
 
+## PWA (Add to Home Screen)
+- UI now includes `manifest.json` and `service-worker.js`.
+- When you open the site on mobile, use “Add to Home Screen”.
+- Cached snapshot data is shown immediately on open.
+
+### Replace Logo & Icons
+Replace these files with your real logo:
+- `frontend/logo.svg` (header logo)
+- `frontend/icons/icon-192.png`
+- `frontend/icons/icon-512.png`
+
+If you want me to use your provided logo image, send it as a file (PNG/SVG) and I will wire it in.
+
 ## Backend API (Render Web Service)
 1. Push this repo to GitHub.
 2. In Render, create a **Web Service** and connect the repo.

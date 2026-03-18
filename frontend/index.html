@@ -4,6 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ICT Trading Bot Dashboard</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#131722" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
@@ -11,12 +16,16 @@
 <body>
   <header>
     <div class="left">
-      <div class="brand"><span class="accent">ICT</span> Bot</div>
+      <div class="brand">
+        <img src="logo.png" alt="Logo" class="logo" />
+        <span class="accent">ICT</span> Bot
+      </div>
       <select id="pairSelect" class="select"></select>
       <div id="tfButtons" class="tf-bar"></div>
     </div>
     <div class="right">
       <div id="status" class="status">Loading...</div>
+      <button id="installBtn" class="btn ghost hidden">Install</button>
       <button id="toggleFvgBtn" class="btn toggle">FVG</button>
       <button id="toggleLiqBtn" class="btn toggle">Liquidity</button>
       <button id="apiBtn" class="btn ghost">API</button>
@@ -71,3 +80,4 @@
   <script src="app.js"></script>
 </body>
 </html>
+
