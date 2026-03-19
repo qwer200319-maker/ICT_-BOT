@@ -404,7 +404,7 @@ function buildFvgShapes(times, fvgs) {
   recent.forEach(z => {
     const x0 = times[Math.max(z.index - 2, 0)];
     const x1 = times[times.length - 1];
-    const color = z.direction === 'bullish' ? 'rgba(38,166,154,0.10)' : 'rgba(239,83,80,0.10)';
+    const color = z.direction === 'bullish' ? 'rgba(38,166,154,0.22)' : 'rgba(239,83,80,0.22)';
     shapes.push({ type: 'rect', x0, x1, y0: z.lower, y1: z.upper, fillcolor: color, line: { width: 0 }, layer: 'below' });
   });
   return shapes;
@@ -715,6 +715,7 @@ apiBaseInput.value = apiBase;
 })();
 
 setInterval(refreshAll, 20000);
+
 
 
 
