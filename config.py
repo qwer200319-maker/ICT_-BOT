@@ -43,9 +43,9 @@ TIMEFRAMES = {
 
 # Candle limits per timeframe
 CANDLE_LIMITS = {
-    "htf": 300,
-    "setup": 300,
-    "entry": 300,
+    "htf": 1000,
+    "setup": 1000,
+    "entry": 1000,
 }
 
 # Scanner settings
@@ -88,11 +88,13 @@ TELEGRAM_DEDUP_STORAGE_PATH = os.getenv(
 WEB_UI_HOST = "0.0.0.0"
 WEB_UI_PORT = 8501
 UI_REFRESH_SECONDS = 30
-UI_MAX_BARS = 500
+UI_MAX_BARS = 1000
 EXPORT_SIGNALS_CSV = False
 SIGNALS_CSV_PATH = "logs/signals.csv"
 
 # Logging / debugging
 LOG_LEVEL = "INFO"
 DEBUG_EXAMPLE_SIGNAL = False
+
+
 

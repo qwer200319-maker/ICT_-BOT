@@ -1,7 +1,7 @@
 const DEFAULT_API_BASE = (window.API_BASE || localStorage.getItem('API_BASE') || '').trim();
 const DEFAULT_WS_BASE = (window.WS_BASE || localStorage.getItem('WS_BASE') || '').trim();
 const WS_ENABLED = (window.WS_ENABLED ?? true) !== false;
-const MAX_BARS = 500;
+const MAX_BARS = 1000;
 
 const pairSelect = document.getElementById('pairSelect');
 const statusEl = document.getElementById('status');
@@ -276,7 +276,7 @@ async function loadConfig() {
   const data = await fetchJson('/api/scan_all');
   if (!data) return;
   pairs = data.pairs || [];
-  timeframes = ['1h','15m','5m'];
+  timeframes = ['1m','5m','15m','1h','4h','1d'];
   currentTf = timeframes.includes('15m') ? '15m' : (timeframes[0] || '5m');
   fillPairs(pairSelect);
   fillPairs(fsPairSelect);
@@ -715,6 +715,8 @@ apiBaseInput.value = apiBase;
 })();
 
 setInterval(refreshAll, 20000);
+
+
 
 
 
